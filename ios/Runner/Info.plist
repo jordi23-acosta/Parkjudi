@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Estacionamiento</string>
+	<string>Parkjudi</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>estacionamiento</string>
+	<string>Parkjudi</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -49,6 +49,22 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- Permisos de ubicación -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Parkjudi necesita tu ubicación para mostrarte estacionamientos cercanos.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Parkjudi necesita tu ubicación para mostrarte estacionamientos cercanos.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Parkjudi necesita tu ubicación para mostrarte estacionamientos cercanos.</string>
+
+	<!-- Permisos de cámara y galería -->
+	<key>NSCameraUsageDescription</key>
+	<string>Parkjudi necesita la cámara para escanear QR y subir fotos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Parkjudi necesita acceso a tu galería para subir fotos del estacionamiento.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Parkjudi necesita guardar fotos en tu galería.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
