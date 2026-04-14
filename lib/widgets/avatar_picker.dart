@@ -34,6 +34,14 @@ class _AvatarPickerState extends State<AvatarPicker> {
     _urlActual = widget.avatarUrl;
   }
 
+  @override
+  void didUpdateWidget(AvatarPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.avatarUrl != widget.avatarUrl) {
+      setState(() => _urlActual = widget.avatarUrl);
+    }
+  }
+
   Future<void> _seleccionar(ImageSource source) async {
     final picker = ImagePicker();
     final imagen = await picker.pickImage(
@@ -59,13 +67,15 @@ class _AvatarPickerState extends State<AvatarPicker> {
           .from('avatars')
           .getPublicUrl(path);
 
-      // Guardar URL en el perfil
+      // Agregar timestamp para evitar caché
+      final urlConCache = '$url?t=${DateTime.now().millisecondsSinceEpoch}';
+
       await Supabase.instance.client
           .from('perfiles')
-          .update({'avatar_url': url})
+          .update({'avatar_url': url}) // guardamos sin timestamp
           .eq('id', uid);
 
-      setState(() => _urlActual = url);
+      setState(() => _urlActual = urlConCache); // mostramos con timestamp
       widget.onUploaded?.call(url);
     } catch (e) {
       if (mounted) {
