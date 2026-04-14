@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'pantallaPrincipal.dart';
+import 'propietario/pantalla_propietario.dart';
 import 'Registro.dart';
 
 const Color _cyan = Color(0xFF00FFE0);
@@ -29,9 +30,23 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passCtrl.text.trim(),
       );
       if (mounted) {
+        // Verificar rol antes de navegar
+        final uid = Supabase.instance.client.auth.currentUser!.id;
+        final perfil = await Supabase.instance.client
+            .from('perfiles')
+            .select('rol')
+            .eq('id', uid)
+            .maybeSingle();
+        final rol = perfil?['rol'] ?? 'conductor';
+
+        if (!mounted) return;
         Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(builder: (_) => const PantallaPrincipal()),
+          MaterialPageRoute(
+            builder: (_) => rol == 'propietario'
+                ? const PantallaPropietario()
+                : const PantallaPrincipal(),
+          ),
           (route) => false,
         );
       }
