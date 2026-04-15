@@ -564,11 +564,18 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
         _reservasPendientesCalificar.isEmpty) {
       _cargarReserva();
     }
-    // Asegurar que el timer corra si hay reserva esperando confirmación
+    // Asegurar que el timer poll corra si hay reserva esperando confirmación
     if (_reservaActiva != null &&
         _reservaActiva!['inicio_real'] == null &&
-        _timerReserva == null) {
-      _cargarReserva();
+        _timerPoll == null) {
+      _timerPoll = Timer.periodic(const Duration(seconds: 4), (_) async {
+        if (!mounted) return;
+        await _refrescarReservaActiva();
+        if (_reservaActiva?['inicio_real'] != null) {
+          _timerPoll?.cancel();
+          _timerPoll = null;
+        }
+      });
     }
     if (_cargandoReserva) {
       return const Center(
