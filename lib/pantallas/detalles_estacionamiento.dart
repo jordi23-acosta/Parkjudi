@@ -198,19 +198,6 @@ class _DetalleEstacionamientoScreenState
   @override
   void dispose() {
     _tabs.dispose();
-    // Liberar bloqueo temporal si el usuario sale sin confirmar reserva
-    if (_espacioSeleccionadoId != null) {
-      final uid = Supabase.instance.client.auth.currentUser?.id;
-      if (uid != null) {
-        Supabase.instance.client
-            .from('espacios')
-            .update({'reservado_hasta': null, 'reservado_por': null})
-            .eq('id', _espacioSeleccionadoId!)
-            .eq('reservado_por', uid)
-            .then((_) {})
-            .catchError((_) {});
-      }
-    }
     super.dispose();
   }
 
@@ -406,8 +393,6 @@ class _DetalleEstacionamientoScreenState
               const SizedBox(width: 10),
               _leyenda(Colors.grey, 'Ocupado'),
               const SizedBox(width: 10),
-              _leyenda(Colors.orange, 'Reservado'),
-              const SizedBox(width: 10),
               _leyenda(colorCianNeon, 'Tuyo'),
             ],
           ),
@@ -426,27 +411,12 @@ class _DetalleEstacionamientoScreenState
             itemCount: _espacios.length,
             itemBuilder: (_, i) {
               final e = _espacios[i];
-              final uid = Supabase.instance.client.auth.currentUser?.id;
               final libre = e['disponible'] == true;
-              final reservadoHasta = e['reservado_hasta'] != null
-                  ? DateTime.tryParse(e['reservado_hasta'])
-                  : null;
-              final reservadoPor = e['reservado_por'];
-              // Reservado temporalmente por otro usuario
-              final bloqueado =
-                  reservadoHasta != null &&
-                  reservadoHasta.isAfter(DateTime.now()) &&
-                  reservadoPor != uid;
-              // Reservado por mí (pre-selección)
-              final miReserva =
-                  reservadoHasta != null &&
-                  reservadoHasta.isAfter(DateTime.now()) &&
-                  reservadoPor == uid;
               final sel = _espacioSeleccionadoId == e['id'];
 
               Color border, bg, text;
               if (!libre && e['id'] == _miEspacioReservadoId) {
-                // Mi espacio reservado — cian
+                // Mi espacio — cian
                 border = colorCianNeon;
                 bg = colorCianNeon.withOpacity(0.15);
                 text = colorCianNeon;
@@ -455,14 +425,11 @@ class _DetalleEstacionamientoScreenState
                 border = Colors.transparent;
                 bg = Colors.grey[900]!;
                 text = Colors.grey[700]!;
-              } else if (bloqueado) {
-                // Reservado temporalmente por otro
-                border = Colors.orange.withOpacity(0.6);
-                bg = Colors.orange.withOpacity(0.1);
-                text = Colors.orange;
-              } else if (sel || miReserva) {
-                // Seleccionado por mí
+              } else if (sel) {
+                // Seleccionado por mí ahora mismo
                 border = colorCianNeon;
+                bg = colorCianNeon;
+                text = Colors.black;
                 bg = colorCianNeon;
                 text = Colors.black;
               } else {
@@ -472,28 +439,15 @@ class _DetalleEstacionamientoScreenState
                 text = colorVerdeStatus;
               }
 
-              final tappable = libre && !bloqueado;
+              final tappable = libre;
 
               return GestureDetector(
                 onTap: tappable
-                    ? () async {
+                    ? () {
                         setState(() {
                           _espacioSeleccionadoId = e['id'];
                           _espacioSeleccionadoCodigo = e['codigo'];
                         });
-                        // Bloquear temporalmente por 10 minutos
-                        try {
-                          final hasta = DateTime.now().add(
-                            const Duration(minutes: 10),
-                          );
-                          await Supabase.instance.client
-                              .from('espacios')
-                              .update({
-                                'reservado_hasta': hasta.toIso8601String(),
-                                'reservado_por': uid,
-                              })
-                              .eq('id', e['id']);
-                        } catch (_) {}
                       }
                     : null,
                 child: Container(
@@ -514,11 +468,6 @@ class _DetalleEstacionamientoScreenState
                             fontSize: 16,
                           ),
                         ),
-                        if (bloqueado)
-                          const Text(
-                            '10m',
-                            style: TextStyle(color: Colors.orange, fontSize: 9),
-                          ),
                       ],
                     ),
                   ),
