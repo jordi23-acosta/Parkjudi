@@ -47,6 +47,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   @override
   void dispose() {
     _timerReserva?.cancel();
+    _timerPoll?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -396,6 +397,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   List<Map<String, dynamic>> _reservasPendientesCalificar = [];
   bool _cargandoReserva = false;
   Timer? _timerReserva;
+  Timer? _timerPoll;
 
   Future<void> _cargarReserva() async {
     setState(() => _cargandoReserva = true);
@@ -450,8 +452,8 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
 
     // Timer para actualizar el tiempo restante cada segundo
     _timerReserva?.cancel();
+    _timerPoll?.cancel();
     if (activa != null) {
-      int _pollSegundos = 0;
       _timerReserva = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
         setState(() {});
@@ -464,20 +466,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
         final finEstimado = DateTime.tryParse(r['fin_estimado'] ?? '');
         final ahora = DateTime.now();
 
-        // Polling cada 5s cuando está esperando confirmación del propietario
-        if (inicioReal == null) {
-          _pollSegundos++;
-          if (_pollSegundos >= 5) {
-            _pollSegundos = 0;
-            _refrescarReservaActiva();
-          }
-        }
-
         // Cancelar automáticamente si venció el tiempo de gracia sin llegar
         if (inicioReal == null &&
             expiraLleg != null &&
             expiraLleg.isBefore(ahora)) {
           _timerReserva?.cancel();
+          _timerPoll?.cancel();
           _cancelarReservaAutomatica(r['id'], r['espacio_id']);
         }
 
@@ -486,9 +480,22 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
             finEstimado != null &&
             finEstimado.isBefore(ahora)) {
           _timerReserva?.cancel();
+          _timerPoll?.cancel();
           _completarReservaAutomatica(r['id'], r['espacio_id']);
         }
       });
+
+      // Polling independiente cada 4s para detectar confirmación del propietario
+      if (activa['inicio_real'] == null) {
+        _timerPoll = Timer.periodic(const Duration(seconds: 4), (_) async {
+          if (!mounted) return;
+          await _refrescarReservaActiva();
+          // Detener poll si ya tiene inicio_real
+          if (_reservaActiva?['inicio_real'] != null) {
+            _timerPoll?.cancel();
+          }
+        });
+      }
     }
   }
 
@@ -507,7 +514,15 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           .limit(1)
           .maybeSingle();
       if (!mounted) return;
-      setState(() => _reservaActiva = activa);
+      // Si inicio_real ya fue registrado, recargar todo para actualizar fin_estimado también
+      final anteriorInicioReal = _reservaActiva?['inicio_real'];
+      final nuevoInicioReal = activa?['inicio_real'];
+      if (anteriorInicioReal == null && nuevoInicioReal != null) {
+        // El propietario confirmó la entrada — recargar completo
+        _cargarReserva();
+      } else {
+        setState(() => _reservaActiva = activa);
+      }
     } catch (_) {}
   }
 
@@ -547,6 +562,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     if (!_cargandoReserva &&
         _reservaActiva == null &&
         _reservasPendientesCalificar.isEmpty) {
+      _cargarReserva();
+    }
+    // Asegurar que el timer corra si hay reserva esperando confirmación
+    if (_reservaActiva != null &&
+        _reservaActiva!['inicio_real'] == null &&
+        _timerReserva == null) {
       _cargarReserva();
     }
     if (_cargandoReserva) {

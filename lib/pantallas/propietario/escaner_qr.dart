@@ -212,13 +212,14 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
     final yaEntro = reserva?['inicio_real'] != null;
     final puedesCobrar =
         esValido &&
-        !vencida &&
         estado == 'activa' &&
         !yaEntro &&
         (esEfectivo || esTransferencia);
 
     final color = !esValido || vencida
         ? Colors.red
+        : yaEntro
+        ? Colors.green
         : estado == 'activa'
         ? _cyan
         : Colors.green;
@@ -319,7 +320,7 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
                 label: Text(
                   _cobrando
                       ? 'Registrando...'
-                      : 'Cobrar \$${reserva?['precio_total']}',
+                      : '✓ Confirmar entrada — \$${reserva?['precio_total']}',
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 15,
