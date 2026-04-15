@@ -33,19 +33,44 @@ class _DetalleState extends State<DetalleEstacionamientoPropietario>
 
   Future<void> _cargar() async {
     final id = widget.estacionamiento['id'];
-    final esp = await Supabase.instance.client
-        .from('espacios')
-        .select()
-        .eq('estacionamiento_id', id);
-    final res = await Supabase.instance.client
-        .from('reservaciones')
-        .select('*, perfiles(nombre)')
-        .eq('estacionamiento_id', id)
-        .order('created_at', ascending: false)
-        .limit(30);
+
+    final results = await Future.wait([
+      Supabase.instance.client
+          .from('espacios')
+          .select('*, reservado_hasta, reservado_por')
+          .eq('estacionamiento_id', id),
+      Supabase.instance.client
+          .from('reservaciones')
+          .select('*, perfiles(nombre)')
+          .eq('estacionamiento_id', id)
+          .order('created_at', ascending: false)
+          .limit(30),
+      Supabase.instance.client
+          .from('reservaciones')
+          .select('espacio_id')
+          .eq('estacionamiento_id', id)
+          .eq('estado', 'activa'),
+    ]);
+
+    final espacios = results[0] as List;
+    final reservaciones = results[1] as List;
+    final reservasActivas = results[2] as List;
+
+    final espaciosConReserva = <String>{
+      for (final r in reservasActivas) r['espacio_id'] as String,
+    };
+
+    // Corregir disponible según reservas activas
+    final espaciosCorregidos = espacios.map((e) {
+      if (espaciosConReserva.contains(e['id'])) {
+        return {...e as Map<String, dynamic>, 'disponible': false};
+      }
+      return e as Map<String, dynamic>;
+    }).toList();
+
     setState(() {
-      _espacios = List<Map<String, dynamic>>.from(esp);
-      _reservaciones = List<Map<String, dynamic>>.from(res);
+      _espacios = List<Map<String, dynamic>>.from(espaciosCorregidos);
+      _reservaciones = List<Map<String, dynamic>>.from(reservaciones);
       _cargando = false;
     });
   }
@@ -99,7 +124,7 @@ class _DetalleState extends State<DetalleEstacionamientoPropietario>
           ),
           Switch(
             value: activo,
-            activeColor: _cyan,
+            activeThumbColor: _cyan,
             onChanged: (_) => _toggleActivo(),
           ),
           const SizedBox(width: 8),
@@ -149,42 +174,91 @@ class _DetalleState extends State<DetalleEstacionamientoPropietario>
   }
 
   Widget _buildEspacios() {
-    return GridView.builder(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Leyenda
+          Row(
+            children: [
+              _leyenda(const Color(0xFF00E676), 'Libre'),
+              const SizedBox(width: 10),
+              _leyenda(Colors.grey, 'Ocupado'),
+              const SizedBox(width: 10),
+              _leyenda(Colors.orange, 'Reservado'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1,
+            ),
+            itemCount: _espacios.length,
+            itemBuilder: (_, i) {
+              final e = _espacios[i];
+              final libre = e['disponible'] == true;
+              final reservadoHasta = e['reservado_hasta'] != null
+                  ? DateTime.tryParse(e['reservado_hasta'])?.toLocal()
+                  : null;
+              final bloqueado =
+                  reservadoHasta != null &&
+                  reservadoHasta.isAfter(DateTime.now());
+
+              Color border, bg, text;
+              if (!libre) {
+                border = Colors.transparent;
+                bg = Colors.grey[900]!;
+                text = Colors.grey[600]!;
+              } else if (bloqueado) {
+                border = Colors.orange.withOpacity(0.6);
+                bg = Colors.orange.withOpacity(0.1);
+                text = Colors.orange;
+              } else {
+                border = const Color(0xFF00E676);
+                bg = const Color(0xFF00E676).withOpacity(0.08);
+                text = const Color(0xFF00E676);
+              }
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: bg,
+                  border: Border.all(color: border, width: 1.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: Text(
+                    e['codigo'],
+                    style: TextStyle(color: text, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
-      itemCount: _espacios.length,
-      itemBuilder: (_, i) {
-        final e = _espacios[i];
-        final libre = e['disponible'] == true;
-        return Container(
-          decoration: BoxDecoration(
-            color: libre
-                ? _cyan.withOpacity(0.1)
-                : Colors.grey.withOpacity(0.1),
-            border: Border.all(
-              color: libre ? _cyan : Colors.grey[700]!,
-              width: 1.5,
-            ),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Center(
-            child: Text(
-              e['codigo'],
-              style: TextStyle(
-                color: libre ? _cyan : Colors.grey[600],
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
+
+  Widget _leyenda(Color color, String texto) => Row(
+    children: [
+      Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(3),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(texto, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+    ],
+  );
 
   Widget _buildReservaciones() {
     if (_reservaciones.isEmpty) {
