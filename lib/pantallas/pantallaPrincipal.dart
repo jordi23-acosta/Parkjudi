@@ -451,6 +451,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     // Timer para actualizar el tiempo restante cada segundo
     _timerReserva?.cancel();
     if (activa != null) {
+      int _pollSegundos = 0;
       _timerReserva = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
         setState(() {});
@@ -462,6 +463,15 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
         final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
         final finEstimado = DateTime.tryParse(r['fin_estimado'] ?? '');
         final ahora = DateTime.now();
+
+        // Polling cada 5s cuando está esperando confirmación del propietario
+        if (inicioReal == null) {
+          _pollSegundos++;
+          if (_pollSegundos >= 5) {
+            _pollSegundos = 0;
+            _refrescarReservaActiva();
+          }
+        }
 
         // Cancelar automáticamente si venció el tiempo de gracia sin llegar
         if (inicioReal == null &&
@@ -480,6 +490,25 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
         }
       });
     }
+  }
+
+  Future<void> _refrescarReservaActiva() async {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      final activa = await Supabase.instance.client
+          .from('reservaciones')
+          .select(
+            '*, estacionamientos(nombre, direccion), espacios(codigo), inicio_real, expira_llegada',
+          )
+          .eq('conductor_id', uid)
+          .eq('estado', 'activa')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (!mounted) return;
+      setState(() => _reservaActiva = activa);
+    } catch (_) {}
   }
 
   Future<void> _cancelarReservaAutomatica(
