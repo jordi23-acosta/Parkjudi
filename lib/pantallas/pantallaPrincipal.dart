@@ -637,11 +637,22 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   }
 
   Widget _buildTicketActivo(Map<String, dynamic> r) {
-    final fin = DateTime.tryParse(r['fin_estimado'] ?? '');
     final inicioReal = r['inicio_real'];
-    final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
     final esperando = inicioReal == null;
+    final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
     final ahora = DateTime.now();
+
+    // Si ya entró, usar fin_estimado de Supabase (actualizado por el propietario)
+    // Si ese fin ya pasó pero inicio_real es reciente, recalcular
+    DateTime? fin = DateTime.tryParse(r['fin_estimado'] ?? '');
+    if (!esperando && fin != null && fin.isBefore(ahora)) {
+      final inicioRealDt = DateTime.tryParse(inicioReal ?? '');
+      final horas = r['horas'] as int? ?? 1;
+      if (inicioRealDt != null) {
+        final finRecalculado = inicioRealDt.add(Duration(hours: horas));
+        if (finRecalculado.isAfter(ahora)) fin = finRecalculado;
+      }
+    }
     final restante = fin != null ? fin.difference(ahora) : Duration.zero;
     final vencida = !esperando && restante.isNegative;
     final graciaDur = expiraLleg != null
