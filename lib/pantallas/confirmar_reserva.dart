@@ -37,6 +37,7 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
   bool _procesando = false;
   bool _cargandoCobro = true;
   String? _error;
+  int _tiempoGracia = 30; // minutos
 
   // Datos de cobro del propietario
   String _metodoCobro = 'efectivo';
@@ -60,13 +61,20 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
           .select('metodo_cobro, titular_cuenta, numero_cuenta, banco')
           .eq('id', widget.propietarioId)
           .maybeSingle();
+
+      final est = await Supabase.instance.client
+          .from('estacionamientos')
+          .select('tiempo_gracia_minutos')
+          .eq('id', widget.estacionamientoId)
+          .maybeSingle();
+
       setState(() {
         _metodoCobro = data?['metodo_cobro'] ?? 'efectivo';
         _titular = data?['titular_cuenta'] ?? '';
         _cuenta = data?['numero_cuenta'] ?? '';
         _banco = data?['banco'] ?? '';
-        // Preseleccionar el método que acepta el propietario
         _metodoPago = _metodoCobro;
+        _tiempoGracia = est?['tiempo_gracia_minutos'] ?? 30;
         _cargandoCobro = false;
       });
     } catch (_) {
@@ -86,7 +94,11 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
 
       await Supabase.instance.client
           .from('espacios')
-          .update({'disponible': false})
+          .update({
+            'disponible': false,
+            'reservado_hasta': null,
+            'reservado_por': null,
+          })
           .eq('id', widget.espacioId);
 
       final reserva = await Supabase.instance.client
@@ -100,6 +112,9 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
             'estado': 'activa',
             'metodo_pago': _metodoPago,
             'fin_estimado': finEstimado.toIso8601String(),
+            'expira_llegada': ahora
+                .add(Duration(minutes: _tiempoGracia))
+                .toIso8601String(),
           })
           .select()
           .single();
@@ -116,10 +131,11 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
               total: _subtotal,
               finEstimado: finEstimado,
               metodoPago: _metodoPago,
-              // Datos bancarios para mostrar en el ticket si es transferencia
               titular: _titular,
               cuenta: _cuenta,
               banco: _banco,
+              tiempoGracia: _tiempoGracia,
+              expiraLlegada: ahora.add(Duration(minutes: _tiempoGracia)),
             ),
           ),
         );
@@ -539,6 +555,8 @@ class TicketScreen extends StatelessWidget {
   final String titular;
   final String cuenta;
   final String banco;
+  final int tiempoGracia;
+  final DateTime? expiraLlegada;
 
   const TicketScreen({
     super.key,
@@ -552,6 +570,8 @@ class TicketScreen extends StatelessWidget {
     this.titular = '',
     this.cuenta = '',
     this.banco = '',
+    this.tiempoGracia = 30,
+    this.expiraLlegada,
   });
 
   @override
@@ -684,6 +704,36 @@ class TicketScreen extends StatelessWidget {
                   ),
                 ),
               ],
+
+              // Aviso de tiempo de gracia
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _cyan.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _cyan.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.access_time_rounded,
+                      color: _cyan,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Tienes $tiempoGracia minutos para llegar al estacionamiento'
+                        '${expiraLlegada != null ? ' (antes de las ${DateFormat.Hm().format(expiraLlegada!)})' : ''}. '
+                        'Si no llegas a tiempo, tu reserva se cancelará automáticamente.',
+                        style: const TextStyle(color: _cyan, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
               const SizedBox(height: 28),
               SizedBox(

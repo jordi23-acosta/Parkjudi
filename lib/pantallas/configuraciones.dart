@@ -17,7 +17,6 @@ class _ConfiguracionesScreenState extends State<ConfiguracionesScreen> {
   bool _notifReservas = true;
   bool _notifVencimiento = true;
   bool _notifOfertas = false;
-  bool _modoOscuro = true;
   bool _guardando = false;
 
   final _nombreCtrl = TextEditingController();
@@ -91,71 +90,6 @@ class _ConfiguracionesScreenState extends State<ConfiguracionesScreen> {
     } finally {
       if (mounted) setState(() => _guardando = false);
     }
-  }
-
-  Future<void> _cambiarContrasena() async {
-    final emailCtrl = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: _card,
-        title: const Text(
-          'Restablecer contraseña',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Te enviaremos un correo para restablecer tu contraseña.',
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: emailCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Tu correo',
-                hintStyle: const TextStyle(color: Colors.grey),
-                filled: true,
-                fillColor: _bg,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () async {
-              if (emailCtrl.text.trim().isEmpty) return;
-              await Supabase.instance.client.auth.resetPasswordForEmail(
-                emailCtrl.text.trim(),
-              );
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Correo enviado. Revisa tu bandeja.'),
-                    backgroundColor: _cyan,
-                  ),
-                );
-              }
-            },
-            child: const Text(
-              'Enviar',
-              style: TextStyle(color: _cyan, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _eliminarCuenta() async {
@@ -309,32 +243,6 @@ class _ConfiguracionesScreenState extends State<ConfiguracionesScreen> {
                 ]),
                 const SizedBox(height: 24),
 
-                // ── APARIENCIA ───────────────────────────────────────────
-                _titulo('APARIENCIA'),
-                _seccionCard([
-                  _buildSwitch(
-                    'Modo oscuro',
-                    'Tema oscuro activado',
-                    Icons.dark_mode_outlined,
-                    _modoOscuro,
-                    (v) => setState(() => _modoOscuro = v),
-                  ),
-                ]),
-                const SizedBox(height: 24),
-
-                // ── SEGURIDAD ────────────────────────────────────────────
-                _titulo('SEGURIDAD'),
-                _seccionCard([
-                  _buildOpcion(
-                    Icons.lock_reset_rounded,
-                    'Cambiar contraseña',
-                    'Te enviaremos un correo',
-                    Colors.orange,
-                    _cambiarContrasena,
-                  ),
-                ]),
-                const SizedBox(height: 24),
-
                 // ── ACERCA DE ────────────────────────────────────────────
                 _titulo('ACERCA DE'),
                 _seccionCard([
@@ -431,7 +339,7 @@ class _ConfiguracionesScreenState extends State<ConfiguracionesScreen> {
           ],
         ),
       ),
-      Switch(value: valor, activeColor: _cyan, onChanged: onChange),
+      Switch(value: valor, activeThumbColor: _cyan, onChanged: onChange),
     ],
   );
 

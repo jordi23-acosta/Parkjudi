@@ -24,6 +24,7 @@ class _AgregarState extends State<AgregarEstacionamientoScreen> {
   final _espaciosCtrl = TextEditingController(text: '10');
   final _descripcionCtrl = TextEditingController();
   final _horarioCtrl = TextEditingController(text: '24 horas');
+  int _tiempoGracia = 30; // minutos por defecto
 
   LatLng? _ubicacion;
   bool _cubierto = false;
@@ -164,6 +165,7 @@ class _AgregarState extends State<AgregarEstacionamientoScreen> {
             'vigilancia_24h': _vigilancia24h,
             'accesible': _accesible,
             'acepta_motos': _aceptaMotos,
+            'tiempo_gracia_minutos': _tiempoGracia,
             'activo': true,
           })
           .select()
@@ -393,6 +395,66 @@ class _AgregarState extends State<AgregarEstacionamientoScreen> {
                     Icons.two_wheeler_rounded,
                     _aceptaMotos,
                     (v) => setState(() => _aceptaMotos = v),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Tiempo de gracia
+            const Text(
+              'TIEMPO DE GRACIA',
+              style: TextStyle(
+                color: Colors.grey,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Si el conductor no llega en este tiempo, la reserva se cancela.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _card,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.timer_outlined, color: _cyan, size: 20),
+                      SizedBox(width: 10),
+                      Text(
+                        'Límite de llegada',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                  DropdownButton<int>(
+                    value: _tiempoGracia,
+                    dropdownColor: _card,
+                    underline: const SizedBox(),
+                    items: [15, 30, 45, 60, 90, 120]
+                        .map(
+                          (m) => DropdownMenuItem(
+                            value: m,
+                            child: Text(
+                              m < 60 ? '$m min' : '${m ~/ 60}h',
+                              style: const TextStyle(
+                                color: _cyan,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => _tiempoGracia = v ?? 30),
                   ),
                 ],
               ),

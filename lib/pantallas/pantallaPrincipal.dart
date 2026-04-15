@@ -1,8 +1,10 @@
 ﻿import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'Login.dart';
 import 'detalles_estacionamiento.dart';
 import 'notificaciones.dart';
@@ -39,6 +41,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   void initState() {
     super.initState();
     _cargarPerfil();
+    _cargarEstacionamientos();
   }
 
   @override
@@ -280,22 +283,45 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   Future<void> _cargarEstacionamientos() async {
     setState(() => _cargandoLista = true);
     try {
-      final data = await Supabase.instance.client
-          .from('estacionamientos')
-          .select('*, espacios(disponible)')
-          .eq('activo', true)
-          .order('created_at', ascending: false);
+      final results = await Future.wait([
+        Supabase.instance.client
+            .from('estacionamientos')
+            .select('*, espacios(id, disponible)')
+            .eq('activo', true)
+            .order('created_at', ascending: false),
+        Supabase.instance.client
+            .from('reservaciones')
+            .select('espacio_id')
+            .eq('estado', 'activa'),
+      ]);
+
+      final data = results[0] as List;
+      final reservasActivas = results[1] as List;
+      final espaciosOcupados = <String>{
+        for (final r in reservasActivas) r['espacio_id'] as String,
+      };
+
+      // Corregir disponible según reservas activas reales
+      final corregidos = data.map((est) {
+        final espacios = ((est['espacios'] as List?) ?? []).map((e) {
+          if (espaciosOcupados.contains(e['id'])) {
+            return {...e as Map<String, dynamic>, 'disponible': false};
+          }
+          return e as Map<String, dynamic>;
+        }).toList();
+        return {...est as Map<String, dynamic>, 'espacios': espacios};
+      }).toList();
+
       setState(
-        () => _listaEstacionamientos = List<Map<String, dynamic>>.from(data),
+        () => _listaEstacionamientos = List<Map<String, dynamic>>.from(
+          corregidos,
+        ),
       );
     } catch (_) {}
     setState(() => _cargandoLista = false);
   }
 
   Widget _construirVistaLista() {
-    if (_listaEstacionamientos.isEmpty && !_cargandoLista) {
-      _cargarEstacionamientos();
-    }
     return Padding(
       padding: const EdgeInsets.all(20.0),
       child: Column(
@@ -367,7 +393,7 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   // VISTA 2: MI RESERVA
   // =========================================================================
   Map<String, dynamic>? _reservaActiva;
-  Map<String, dynamic>? _reservaPendienteCalificar;
+  List<Map<String, dynamic>> _reservasPendientesCalificar = [];
   bool _cargandoReserva = false;
   Timer? _timerReserva;
 
@@ -378,37 +404,47 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
 
     final activa = await Supabase.instance.client
         .from('reservaciones')
-        .select('*, estacionamientos(nombre, direccion), espacios(codigo)')
+        .select(
+          '*, estacionamientos(nombre, direccion), espacios(codigo), inicio_real, expira_llegada',
+        )
         .eq('conductor_id', uid)
         .eq('estado', 'activa')
         .order('created_at', ascending: false)
         .limit(1)
         .maybeSingle();
 
+    // Fix 1: solo completadas que realmente entraron (inicio_real no nulo)
     final completadas = await Supabase.instance.client
         .from('reservaciones')
         .select('*, estacionamientos(nombre)')
         .eq('conductor_id', uid)
         .eq('estado', 'completada')
+        .not('inicio_real', 'is', null)
         .order('created_at', ascending: false)
         .limit(5);
 
-    Map<String, dynamic>? pendiente;
+    // Fix 2: cargar IDs descartadas permanentemente
+    final prefs = await SharedPreferences.getInstance();
+    final descartadas = prefs.getStringList('calificar_descartadas_$uid') ?? [];
+
+    final pendientes = <Map<String, dynamic>>[];
     for (final r in (completadas as List)) {
+      // Saltar si el usuario ya descartó esta reserva
+      if (descartadas.contains(r['id'] as String)) continue;
+
       final resena = await Supabase.instance.client
           .from('resenas')
           .select('id')
           .eq('reservacion_id', r['id'])
           .maybeSingle();
       if (resena == null) {
-        pendiente = r;
-        break;
+        pendientes.add(r);
       }
     }
 
     setState(() {
       _reservaActiva = activa;
-      _reservaPendienteCalificar = pendiente;
+      _reservasPendientesCalificar = pendientes;
       _cargandoReserva = false;
     });
 
@@ -416,15 +452,72 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     _timerReserva?.cancel();
     if (activa != null) {
       _timerReserva = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
+        if (!mounted) return;
+        setState(() {});
+
+        final r = _reservaActiva;
+        if (r == null) return;
+
+        final inicioReal = r['inicio_real'];
+        final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
+        final finEstimado = DateTime.tryParse(r['fin_estimado'] ?? '');
+        final ahora = DateTime.now();
+
+        // Cancelar automáticamente si venció el tiempo de gracia sin llegar
+        if (inicioReal == null &&
+            expiraLleg != null &&
+            expiraLleg.isBefore(ahora)) {
+          _timerReserva?.cancel();
+          _cancelarReservaAutomatica(r['id'], r['espacio_id']);
+        }
+
+        // Completar automáticamente si venció el tiempo de uso
+        if (inicioReal != null &&
+            finEstimado != null &&
+            finEstimado.isBefore(ahora)) {
+          _timerReserva?.cancel();
+          _completarReservaAutomatica(r['id'], r['espacio_id']);
+        }
       });
     }
+  }
+
+  Future<void> _cancelarReservaAutomatica(
+    String reservaId,
+    String espacioId,
+  ) async {
+    try {
+      await Supabase.instance.client.rpc(
+        'cancelar_reserva',
+        params: {'reserva_id': reservaId},
+      );
+      _cargarReserva();
+      _cargarEstacionamientos();
+    } catch (_) {}
+  }
+
+  Future<void> _completarReservaAutomatica(
+    String reservaId,
+    String espacioId,
+  ) async {
+    try {
+      await Supabase.instance.client
+          .from('reservaciones')
+          .update({'estado': 'completada'})
+          .eq('id', reservaId);
+      await Supabase.instance.client
+          .from('espacios')
+          .update({'disponible': true})
+          .eq('id', espacioId);
+      _cargarReserva();
+      _cargarEstacionamientos();
+    } catch (_) {}
   }
 
   Widget _construirVistaReserva() {
     if (!_cargandoReserva &&
         _reservaActiva == null &&
-        _reservaPendienteCalificar == null) {
+        _reservasPendientesCalificar.isEmpty) {
       _cargarReserva();
     }
     if (_cargandoReserva) {
@@ -473,9 +566,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
                   ],
                 ),
               ),
-            if (_reservaPendienteCalificar != null) ...[
+
+            // handled by _reservasPendientesCalificar below
+            if (_reservasPendientesCalificar.isNotEmpty &&
+                _reservaActiva == null) ...[
               const SizedBox(height: 20),
-              _buildCalificarCard(_reservaPendienteCalificar!),
+              ..._reservasPendientesCalificar.map(_buildCalificarCard),
             ],
           ],
         ),
@@ -486,10 +582,17 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   Widget _buildTicketActivo(Map<String, dynamic> r) {
     final fin = DateTime.tryParse(r['fin_estimado'] ?? '');
     final inicioReal = r['inicio_real'];
-    final esperando = inicioReal == null; // propietario aún no confirmó
+    final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
+    final esperando = inicioReal == null;
     final ahora = DateTime.now();
     final restante = fin != null ? fin.difference(ahora) : Duration.zero;
     final vencida = !esperando && restante.isNegative;
+    final graciaDur = expiraLleg != null
+        ? expiraLleg.difference(ahora)
+        : Duration.zero;
+    final graciaVencida = expiraLleg != null && graciaDur.isNegative;
+    final ggMin = graciaDur.inMinutes.abs().toString().padLeft(2, '0');
+    final ggSec = (graciaDur.inSeconds.abs() % 60).toString().padLeft(2, '0');
     final hh = restante.inHours.abs().toString().padLeft(2, '0');
     final mm = (restante.inMinutes.abs() % 60).toString().padLeft(2, '0');
     final ss = (restante.inSeconds.abs() % 60).toString().padLeft(2, '0');
@@ -506,14 +609,16 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           Text(
             vencida
                 ? 'Reserva vencida'
+                : esperando && graciaVencida
+                ? 'Tiempo agotado'
                 : esperando
                 ? 'Esperando confirmación'
                 : 'Ticket Activo',
             style: TextStyle(
-              color: vencida
-                  ? Colors.orange
+              color: vencida || (esperando && graciaVencida)
+                  ? Colors.red
                   : esperando
-                  ? Colors.grey
+                  ? Colors.orange
                   : colorCianNeon,
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -521,12 +626,22 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           ),
           const SizedBox(height: 16),
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.qr_code_2, size: 120, color: Colors.black),
+            child: QrImageView(
+              data: r['id'] ?? 'sin-id',
+              version: QrVersions.auto,
+              size: 220,
+              backgroundColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'ID: ${((r['id'] as String?) ?? '').isNotEmpty ? (r['id'] as String).substring(0, 8).toUpperCase() : ''}',
+            style: const TextStyle(color: Colors.grey, fontSize: 11),
           ),
           const SizedBox(height: 16),
           Text(
@@ -545,21 +660,23 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Tiempo restante:',
-                style: TextStyle(color: Colors.grey),
+              Text(
+                esperando ? 'Tiempo para llegar:' : 'Tiempo restante:',
+                style: const TextStyle(color: Colors.grey),
               ),
               Text(
                 vencida
                     ? 'Vencido'
+                    : esperando && graciaVencida
+                    ? 'Tiempo agotado'
                     : esperando
-                    ? 'Pendiente de entrada'
+                    ? 'Llegar en: $ggMin:$ggSec'
                     : '$hh:$mm:$ss',
                 style: TextStyle(
-                  color: vencida
-                      ? Colors.orange
+                  color: vencida || (esperando && graciaVencida)
+                      ? Colors.red
                       : esperando
-                      ? Colors.grey
+                      ? Colors.orange
                       : colorVerdeStatus,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -666,21 +783,24 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
       );
       _timerReserva?.cancel();
       _cargarReserva();
-      if (mounted)
+      _cargarEstacionamientos(); // Recargar lista para actualizar espacios libres
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Reserva cancelada'),
             backgroundColor: Colors.orange,
           ),
         );
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: Colors.redAccent,
           ),
         );
+      }
     }
   }
 
@@ -774,26 +894,42 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
           })
           .eq('id', r['id']);
       _cargarReserva();
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Tiempo extendido +${horasExtra}h'),
             backgroundColor: colorCianNeon,
           ),
         );
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: Colors.redAccent,
           ),
         );
+      }
     }
+  }
+
+  Future<void> _descartarCalificacion(Map<String, dynamic> r) async {
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    if (uid == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'calificar_descartadas_$uid';
+    final descartadas = prefs.getStringList(key) ?? [];
+    if (!descartadas.contains(r['id'] as String)) {
+      descartadas.add(r['id'] as String);
+      await prefs.setStringList(key, descartadas);
+    }
+    setState(() => _reservasPendientesCalificar.remove(r));
   }
 
   Widget _buildCalificarCard(Map<String, dynamic> r) {
     return Container(
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colorGrisTarjeta,
@@ -803,17 +939,26 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(Icons.star_rounded, color: Colors.amber, size: 20),
-              SizedBox(width: 8),
-              Text(
-                '�C�mo estuvo tu visita?',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
+              const Row(
+                children: [
+                  Icon(Icons.star_rounded, color: Colors.amber, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    '¿Cómo estuvo tu visita?',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
+              ),
+              GestureDetector(
+                onTap: () => _descartarCalificacion(r),
+                child: const Icon(Icons.close, color: Colors.grey, size: 18),
               ),
             ],
           ),
@@ -823,36 +968,59 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
             style: const TextStyle(color: Colors.grey, fontSize: 13),
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.amber,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey,
+                    side: const BorderSide(color: Colors.white12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                  onPressed: () => _descartarCalificacion(r),
+                  child: const Text('Ahora no'),
                 ),
               ),
-              onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => CalificarEstacionamientoScreen(
-                      estacionamientoId: r['estacionamiento_id'],
-                      reservacionId: r['id'],
-                      nombreEstacionamiento:
-                          r['estacionamientos']?['nombre'] ?? '',
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
-                );
-                _cargarReserva();
-              },
-              child: const Text(
-                'Calificar ahora',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                  onPressed: () async {
+                    final calificado = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => CalificarEstacionamientoScreen(
+                          estacionamientoId: r['estacionamiento_id'],
+                          reservacionId: r['id'],
+                          nombreEstacionamiento:
+                              r['estacionamientos']?['nombre'] ?? '',
+                        ),
+                      ),
+                    );
+                    // Si omitió (calificado == false), descartar permanentemente
+                    if (calificado != true) {
+                      await _descartarCalificacion(r);
+                    } else {
+                      _cargarReserva();
+                    }
+                  },
+                  child: const Text(
+                    'Calificar',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),

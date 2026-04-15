@@ -43,6 +43,7 @@ dependencies:
   image_picker: any
   geocoding: any
   flutter_rating_bar: any
+  shared_preferences: any
 
 
 dev_dependencies:

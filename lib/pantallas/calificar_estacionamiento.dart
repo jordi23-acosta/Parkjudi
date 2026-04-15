@@ -38,9 +38,9 @@ class _CalificarState extends State<CalificarEstacionamientoScreen> {
         'estrellas': _estrellas.toInt(),
         'comentario': _comentarioCtrl.text.trim(),
       });
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, true); // éxito
     } catch (_) {
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, false);
     } finally {
       if (mounted) setState(() => _guardando = false);
     }
@@ -92,7 +92,7 @@ class _CalificarState extends State<CalificarEstacionamientoScreen> {
               minRating: 1,
               itemCount: 5,
               itemSize: 48,
-              itemBuilder: (_, __) =>
+              itemBuilder: (_, _) =>
                   const Icon(Icons.star_rounded, color: Colors.amber),
               onRatingUpdate: (r) => setState(() => _estrellas = r),
             ),
@@ -127,7 +127,7 @@ class _CalificarState extends State<CalificarEstacionamientoScreen> {
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.pop(context, false),
                     child: const Text('Omitir'),
                   ),
                 ),

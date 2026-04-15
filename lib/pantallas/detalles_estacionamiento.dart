@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
@@ -42,12 +42,12 @@ class _DetalleEstacionamientoScreenState
   String _propietarioId = '';
   double _promedioEstrellas = 0;
 
+  String? _miEspacioReservadoId;
   // Navegación
   GoogleMapController? _mapCtrl;
   LatLng? _miPosicion;
   LatLng? _destino;
-  Set<Polyline> _polylines = {};
-  Set<Marker> _markers = {};
+  final Set<Marker> _markers = {};
 
   @override
   void initState() {
@@ -61,26 +61,58 @@ class _DetalleEstacionamientoScreenState
       await Supabase.instance.client.rpc('liberar_espacio_vencido');
     } catch (_) {}
 
-    final est = await Supabase.instance.client
-        .from('estacionamientos')
-        .select()
-        .eq('id', widget.estacionamientoId)
-        .maybeSingle();
+    final uid = Supabase.instance.client.auth.currentUser?.id;
 
-    final espacios = await Supabase.instance.client
-        .from('espacios')
-        .select()
-        .eq('estacionamiento_id', widget.estacionamientoId)
-        .order('codigo');
+    // Ejecutar todas las queries en paralelo
+    final results = await Future.wait([
+      Supabase.instance.client
+          .from('estacionamientos')
+          .select()
+          .eq('id', widget.estacionamientoId)
+          .maybeSingle(),
+      Supabase.instance.client
+          .from('espacios')
+          .select('*, reservado_hasta, reservado_por')
+          .eq('estacionamiento_id', widget.estacionamientoId)
+          .order('codigo'),
+      Supabase.instance.client
+          .from('resenas')
+          .select('*, perfiles(nombre, avatar_url)')
+          .eq('estacionamiento_id', widget.estacionamientoId)
+          .order('created_at', ascending: false),
+      Supabase.instance.client
+          .from('reservaciones')
+          .select('espacio_id, conductor_id')
+          .eq('estacionamiento_id', widget.estacionamientoId)
+          .eq('estado', 'activa'),
+    ]);
 
-    final resenas = await Supabase.instance.client
-        .from('resenas')
-        .select('*, perfiles(nombre, avatar_url)')
-        .eq('estacionamiento_id', widget.estacionamientoId)
-        .order('created_at', ascending: false);
+    final est = results[0] as Map<String, dynamic>?;
+    final espacios = results[1] as List;
+    final resenas = results[2] as List;
+    final reservasActivas = results[3] as List;
+
+    // Espacios ocupados por reserva activa
+    final espaciosConReserva = <String>{
+      for (final r in reservasActivas) r['espacio_id'] as String,
+    };
+
+    // Mi espacio reservado
+    final miReserva = uid != null
+        ? reservasActivas.where((r) => r['conductor_id'] == uid).firstOrNull
+        : null;
+    final miEspacio = miReserva?['espacio_id'] as String?;
+
+    // Corregir disponible: si tiene reserva activa, no está libre
+    final espaciosCorregidos = espacios.map((e) {
+      if (espaciosConReserva.contains(e['id'])) {
+        return {...e as Map<String, dynamic>, 'disponible': false};
+      }
+      return e as Map<String, dynamic>;
+    }).toList();
 
     double promedio = 0;
-    if ((resenas as List).isNotEmpty) {
+    if (resenas.isNotEmpty) {
       promedio =
           resenas.fold<double>(
             0,
@@ -109,9 +141,10 @@ class _DetalleEstacionamientoScreenState
     setState(() {
       _estacionamiento = est;
       _propietarioId = est?['propietario_id'] ?? '';
-      _espacios = List<Map<String, dynamic>>.from(espacios);
+      _espacios = List<Map<String, dynamic>>.from(espaciosCorregidos);
       _resenas = List<Map<String, dynamic>>.from(resenas);
       _promedioEstrellas = promedio;
+      _miEspacioReservadoId = miEspacio;
       _cargando = false;
     });
   }
@@ -119,8 +152,9 @@ class _DetalleEstacionamientoScreenState
   Future<void> _obtenerMiPosicion() async {
     try {
       LocationPermission perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied)
+      if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
+      }
       if (perm == LocationPermission.deniedForever) return;
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
@@ -138,17 +172,7 @@ class _DetalleEstacionamientoScreenState
             infoWindow: const InfoWindow(title: 'Tu ubicación'),
           ),
         );
-        // Línea directa entre mi posición y el destino
-        if (_destino != null) {
-          _polylines = {
-            Polyline(
-              polylineId: const PolylineId('ruta'),
-              points: [ll, _destino!],
-              color: colorCianNeon,
-              width: 4,
-            ),
-          };
-        }
+        // Línea directa eliminada — se usa Google Maps para navegación
       });
       // Ajustar cámara para mostrar ambos puntos
       if (_destino != null && _mapCtrl != null) {
@@ -187,7 +211,7 @@ class _DetalleEstacionamientoScreenState
       body: _cargando
           ? const Center(child: CircularProgressIndicator(color: colorCianNeon))
           : NestedScrollView(
-              headerSliverBuilder: (_, __) => [
+              headerSliverBuilder: (_, _) => [
                 SliverAppBar(
                   expandedHeight: 220,
                   pinned: true,
@@ -366,10 +390,12 @@ class _DetalleEstacionamientoScreenState
           Row(
             children: [
               _leyenda(colorVerdeStatus, 'Libre'),
-              const SizedBox(width: 15),
+              const SizedBox(width: 10),
               _leyenda(Colors.grey, 'Ocupado'),
-              const SizedBox(width: 15),
-              _leyenda(colorCianNeon, 'Seleccionado'),
+              const SizedBox(width: 10),
+              _leyenda(Colors.orange, 'Reservado'),
+              const SizedBox(width: 10),
+              _leyenda(colorCianNeon, 'Tuyo'),
             ],
           ),
           const SizedBox(height: 16),
@@ -387,22 +413,75 @@ class _DetalleEstacionamientoScreenState
             itemCount: _espacios.length,
             itemBuilder: (_, i) {
               final e = _espacios[i];
+              final uid = Supabase.instance.client.auth.currentUser?.id;
               final libre = e['disponible'] == true;
+              final reservadoHasta = e['reservado_hasta'] != null
+                  ? DateTime.tryParse(e['reservado_hasta'])
+                  : null;
+              final reservadoPor = e['reservado_por'];
+              // Reservado temporalmente por otro usuario
+              final bloqueado =
+                  reservadoHasta != null &&
+                  reservadoHasta.isAfter(DateTime.now()) &&
+                  reservadoPor != uid;
+              // Reservado por mí (pre-selección)
+              final miReserva =
+                  reservadoHasta != null &&
+                  reservadoHasta.isAfter(DateTime.now()) &&
+                  reservadoPor == uid;
               final sel = _espacioSeleccionadoId == e['id'];
-              Color border = libre ? colorVerdeStatus : Colors.transparent;
-              Color bg = libre ? Colors.transparent : Colors.grey[900]!;
-              Color text = libre ? colorVerdeStatus : Colors.grey[700]!;
-              if (sel) {
-                bg = colorCianNeon;
+
+              Color border, bg, text;
+              if (!libre && e['id'] == _miEspacioReservadoId) {
+                // Mi espacio reservado — cian
                 border = colorCianNeon;
+                bg = colorCianNeon.withOpacity(0.15);
+                text = colorCianNeon;
+              } else if (!libre) {
+                // Ocupado por otro
+                border = Colors.transparent;
+                bg = Colors.grey[900]!;
+                text = Colors.grey[700]!;
+              } else if (bloqueado) {
+                // Reservado temporalmente por otro
+                border = Colors.orange.withOpacity(0.6);
+                bg = Colors.orange.withOpacity(0.1);
+                text = Colors.orange;
+              } else if (sel || miReserva) {
+                // Seleccionado por mí
+                border = colorCianNeon;
+                bg = colorCianNeon;
                 text = Colors.black;
+              } else {
+                // Libre
+                border = colorVerdeStatus;
+                bg = Colors.transparent;
+                text = colorVerdeStatus;
               }
+
+              final tappable = libre && !bloqueado;
+
               return GestureDetector(
-                onTap: libre
-                    ? () => setState(() {
-                        _espacioSeleccionadoId = e['id'];
-                        _espacioSeleccionadoCodigo = e['codigo'];
-                      })
+                onTap: tappable
+                    ? () async {
+                        setState(() {
+                          _espacioSeleccionadoId = e['id'];
+                          _espacioSeleccionadoCodigo = e['codigo'];
+                        });
+                        // Bloquear temporalmente por 10 minutos
+                        try {
+                          final hasta = DateTime.now().add(
+                            const Duration(minutes: 10),
+                          );
+                          await Supabase.instance.client
+                              .from('espacios')
+                              .update({
+                                'reservado_hasta': hasta.toIso8601String(),
+                                'reservado_por': uid,
+                              })
+                              .eq('id', e['id']);
+                        } catch (_) {}
+                      }
                     : null,
                 child: Container(
                   decoration: BoxDecoration(
@@ -411,13 +490,23 @@ class _DetalleEstacionamientoScreenState
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
-                    child: Text(
-                      e['codigo'],
-                      style: TextStyle(
-                        color: text,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          e['codigo'],
+                          style: TextStyle(
+                            color: text,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (bloqueado)
+                          const Text(
+                            '10m',
+                            style: TextStyle(color: Colors.orange, fontSize: 9),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -508,7 +597,6 @@ class _DetalleEstacionamientoScreenState
                     zoom: 15,
                   ),
                   markers: _markers,
-                  polylines: _polylines,
                   zoomControlsEnabled: false,
                   myLocationEnabled: true,
                   myLocationButtonEnabled: false,
@@ -589,7 +677,7 @@ class _DetalleEstacionamientoScreenState
                   children: [
                     RatingBarIndicator(
                       rating: _promedioEstrellas,
-                      itemBuilder: (_, __) =>
+                      itemBuilder: (_, _) =>
                           const Icon(Icons.star_rounded, color: Colors.amber),
                       itemCount: 5,
                       itemSize: 22,
@@ -631,6 +719,8 @@ class _DetalleEstacionamientoScreenState
     final fechaStr = fecha != null
         ? '${fecha.day}/${fecha.month}/${fecha.year}'
         : '';
+    final uid = Supabase.instance.client.auth.currentUser?.id;
+    final esMia = r['conductor_id'] == uid;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -638,6 +728,9 @@ class _DetalleEstacionamientoScreenState
       decoration: BoxDecoration(
         color: colorGrisTarjeta,
         borderRadius: BorderRadius.circular(12),
+        border: esMia
+            ? Border.all(color: colorCianNeon.withOpacity(0.3))
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -680,11 +773,59 @@ class _DetalleEstacionamientoScreenState
               ),
               RatingBarIndicator(
                 rating: (r['estrellas'] as int).toDouble(),
-                itemBuilder: (_, __) =>
+                itemBuilder: (_, _) =>
                     const Icon(Icons.star_rounded, color: Colors.amber),
                 itemCount: 5,
                 itemSize: 16,
               ),
+              if (esMia) ...[
+                const SizedBox(width: 4),
+                PopupMenuButton<String>(
+                  icon: const Icon(
+                    Icons.more_vert,
+                    color: Colors.grey,
+                    size: 18,
+                  ),
+                  color: colorGrisTarjeta,
+                  onSelected: (value) {
+                    if (value == 'editar') _editarResena(r);
+                    if (value == 'eliminar') _eliminarResena(r);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'editar',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.edit_outlined,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                          SizedBox(width: 8),
+                          Text('Editar', style: TextStyle(color: Colors.white)),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'eliminar',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.delete_outline,
+                            color: Colors.redAccent,
+                            size: 16,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Eliminar',
+                            style: TextStyle(color: Colors.redAccent),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
           if (r['comentario']?.isNotEmpty == true) ...[
@@ -701,6 +842,169 @@ class _DetalleEstacionamientoScreenState
         ],
       ),
     );
+  }
+
+  Future<void> _editarResena(Map<String, dynamic> r) async {
+    final estrellasNotifier = ValueNotifier<double>(
+      (r['estrellas'] as int).toDouble(),
+    );
+    final comentarioCtrl = TextEditingController(text: r['comentario'] ?? '');
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: colorGrisTarjeta,
+        title: const Text(
+          'Editar reseña',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ValueListenableBuilder<double>(
+              valueListenable: estrellasNotifier,
+              builder: (_, val, __) => RatingBar.builder(
+                initialRating: val,
+                minRating: 1,
+                itemCount: 5,
+                itemSize: 36,
+                itemBuilder: (_, _) =>
+                    const Icon(Icons.star_rounded, color: Colors.amber),
+                onRatingUpdate: (v) => estrellasNotifier.value = v,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: comentarioCtrl,
+              maxLines: 3,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Comentario (opcional)...',
+                hintStyle: const TextStyle(color: Colors.grey),
+                filled: true,
+                fillColor: colorOscuroFondo,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Guardar',
+              style: TextStyle(
+                color: colorCianNeon,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) {
+      estrellasNotifier.dispose();
+      return;
+    }
+    final nuevasEstrellas = estrellasNotifier.value.toInt();
+    final nuevoComentario = comentarioCtrl.text.trim();
+    estrellasNotifier.dispose();
+
+    try {
+      await Supabase.instance.client
+          .from('resenas')
+          .update({'estrellas': nuevasEstrellas, 'comentario': nuevoComentario})
+          .eq('id', r['id']);
+      // Actualizar localmente sin recargar todo
+      setState(() {
+        final idx = _resenas.indexWhere((x) => x['id'] == r['id']);
+        if (idx != -1) {
+          _resenas[idx] = {
+            ..._resenas[idx],
+            'estrellas': nuevasEstrellas,
+            'comentario': nuevoComentario,
+          };
+          _promedioEstrellas =
+              _resenas.fold<double>(
+                0,
+                (s, x) => s + (x['estrellas'] as int).toDouble(),
+              ) /
+              _resenas.length;
+        }
+      });
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+    }
+  }
+
+  Future<void> _eliminarResena(Map<String, dynamic> r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: colorGrisTarjeta,
+        title: const Text(
+          '¿Eliminar reseña?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'Esta acción no se puede deshacer.',
+          style: TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    try {
+      await Supabase.instance.client.from('resenas').delete().eq('id', r['id']);
+      setState(() {
+        _resenas.removeWhere((x) => x['id'] == r['id']);
+        _promedioEstrellas = _resenas.isEmpty
+            ? 0
+            : _resenas.fold<double>(
+                    0,
+                    (s, x) => s + (x['estrellas'] as int).toDouble(),
+                  ) /
+                  _resenas.length;
+      });
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+    }
   }
 
   Widget _stat(String valor, String label, Color color) => Expanded(

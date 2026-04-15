@@ -31,7 +31,7 @@ class _EscanerQrScreenState extends State<EscanerQrScreen> {
       final reserva = await Supabase.instance.client
           .from('reservaciones')
           .select(
-            '*, perfiles(nombre), espacios(codigo), estacionamientos(nombre)',
+            '*, perfiles(nombre), espacios(codigo), estacionamientos(nombre), inicio_real',
           )
           .eq('id', codigo)
           .maybeSingle();
@@ -163,7 +163,6 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
     setState(() => _cobrando = true);
     try {
       final reservaId = widget.reserva!['id'];
-      final espacioId = widget.reserva!['espacio_id'];
       final horas = widget.reserva!['horas'] as int? ?? 1;
       final ahora = DateTime.now();
       final finReal = ahora.add(Duration(hours: horas));
@@ -210,10 +209,12 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
     final vencida = fin != null && fin.isBefore(DateTime.now());
     final esEfectivo = reserva?['metodo_pago'] == 'efectivo';
     final esTransferencia = reserva?['metodo_pago'] == 'transferencia';
+    final yaEntro = reserva?['inicio_real'] != null;
     final puedesCobrar =
         esValido &&
         !vencida &&
         estado == 'activa' &&
+        !yaEntro &&
         (esEfectivo || esTransferencia);
 
     final color = !esValido || vencida
@@ -253,6 +254,8 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
                 ? 'QR Inválido'
                 : vencida
                 ? 'Reserva vencida'
+                : yaEntro
+                ? 'Conductor ya adentro ✓'
                 : estado == 'activa'
                 ? 'Reserva válida ✓'
                 : 'Reserva $estado',
