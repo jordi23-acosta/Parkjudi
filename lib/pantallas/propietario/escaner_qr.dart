@@ -177,6 +177,12 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
           })
           .eq('id', reservaId);
 
+      // Marcar espacio como ocupado
+      await Supabase.instance.client
+          .from('espacios')
+          .update({'disponible': false})
+          .eq('id', widget.reserva!['espacio_id']);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
