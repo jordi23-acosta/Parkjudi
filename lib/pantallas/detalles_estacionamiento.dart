@@ -198,6 +198,19 @@ class _DetalleEstacionamientoScreenState
   @override
   void dispose() {
     _tabs.dispose();
+    // Liberar bloqueo temporal si el usuario sale sin confirmar reserva
+    if (_espacioSeleccionadoId != null) {
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid != null) {
+        Supabase.instance.client
+            .from('espacios')
+            .update({'reservado_hasta': null, 'reservado_por': null})
+            .eq('id', _espacioSeleccionadoId!)
+            .eq('reservado_por', uid)
+            .then((_) {})
+            .catchError((_) {});
+      }
+    }
     super.dispose();
   }
 
