@@ -164,7 +164,7 @@ class _ResultadoSheetState extends State<_ResultadoSheet> {
     try {
       final reservaId = widget.reserva!['id'];
       final horas = widget.reserva!['horas'] as int? ?? 1;
-      final ahora = DateTime.now();
+      final ahora = DateTime.now().toUtc();
       final finReal = ahora.add(Duration(hours: horas));
 
       // Guardar inicio_real y fin_real — el tiempo empieza AHORA

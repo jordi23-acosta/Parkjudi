@@ -89,7 +89,7 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
     });
     try {
       final uid = Supabase.instance.client.auth.currentUser!.id;
-      final ahora = DateTime.now();
+      final ahora = DateTime.now().toUtc();
       final finEstimado = ahora.add(Duration(hours: _horas));
 
       await Supabase.instance.client
@@ -135,7 +135,9 @@ class _ConfirmarReservaScreenState extends State<ConfirmarReservaScreen> {
               cuenta: _cuenta,
               banco: _banco,
               tiempoGracia: _tiempoGracia,
-              expiraLlegada: ahora.add(Duration(minutes: _tiempoGracia)),
+              expiraLlegada: ahora.toLocal().add(
+                Duration(minutes: _tiempoGracia),
+              ),
             ),
           ),
         );
