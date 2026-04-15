@@ -462,8 +462,12 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
         if (r == null) return;
 
         final inicioReal = r['inicio_real'];
-        final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
-        final finEstimado = DateTime.tryParse(r['fin_estimado'] ?? '');
+        final expiraLleg = r['expira_llegada'] != null
+            ? DateTime.tryParse(r['expira_llegada'])?.toLocal()
+            : null;
+        final finEstimado = r['fin_estimado'] != null
+            ? DateTime.tryParse(r['fin_estimado'])?.toLocal()
+            : null;
         final ahora = DateTime.now();
 
         // Cancelar automáticamente si venció el tiempo de gracia sin llegar
@@ -639,14 +643,21 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
   Widget _buildTicketActivo(Map<String, dynamic> r) {
     final inicioReal = r['inicio_real'];
     final esperando = inicioReal == null;
-    final expiraLleg = DateTime.tryParse(r['expira_llegada'] ?? '');
+    final expiraLleg = r['expira_llegada'] != null
+        ? DateTime.tryParse(r['expira_llegada'])?.toLocal()
+        : null;
     final ahora = DateTime.now();
 
-    // Si ya entró, usar fin_estimado de Supabase (actualizado por el propietario)
-    // Si ese fin ya pasó pero inicio_real es reciente, recalcular
-    DateTime? fin = DateTime.tryParse(r['fin_estimado'] ?? '');
+    // Parsear fin_estimado como UTC y convertir a local
+    DateTime? fin = r['fin_estimado'] != null
+        ? DateTime.tryParse(r['fin_estimado'])?.toLocal()
+        : null;
+
+    // Si ya entró pero fin sigue vencido, recalcular desde inicio_real
     if (!esperando && fin != null && fin.isBefore(ahora)) {
-      final inicioRealDt = DateTime.tryParse(inicioReal ?? '');
+      final inicioRealDt = r['inicio_real'] != null
+          ? DateTime.tryParse(r['inicio_real'])?.toLocal()
+          : null;
       final horas = r['horas'] as int? ?? 1;
       if (inicioRealDt != null) {
         final finRecalculado = inicioRealDt.add(Duration(hours: horas));
@@ -948,8 +959,9 @@ class _PantallaPrincipalState extends State<PantallaPrincipal> {
     );
     if (ok != true) return;
     try {
-      final finActual =
-          DateTime.tryParse(r['fin_estimado'] ?? '') ?? DateTime.now();
+      final finActual = r['fin_estimado'] != null
+          ? DateTime.tryParse(r['fin_estimado'])?.toLocal() ?? DateTime.now()
+          : DateTime.now();
       final nuevoFin = finActual.add(Duration(hours: horasExtra));
       final pph = (r['precio_total'] as num) / (r['horas'] as num? ?? 1);
       final nuevoPrecio = (r['precio_total'] as num) + (pph * horasExtra);
