@@ -332,12 +332,28 @@ class _DetalleEstacionamientoScreenState
                           borderRadius: BorderRadius.circular(15),
                         ),
                       ),
-                      onPressed: () {
+                      onPressed: () async {
                         final precio =
                             double.tryParse(
                               widget.precio.replaceAll(RegExp(r'[^0-9.]'), ''),
                             ) ??
                             15.0;
+                        // Bloquear temporalmente al continuar (no al tocar)
+                        try {
+                          final uid =
+                              Supabase.instance.client.auth.currentUser?.id;
+                          final hasta = DateTime.now().add(
+                            const Duration(minutes: 10),
+                          );
+                          await Supabase.instance.client
+                              .from('espacios')
+                              .update({
+                                'reservado_hasta': hasta.toIso8601String(),
+                                'reservado_por': uid,
+                              })
+                              .eq('id', _espacioSeleccionadoId!);
+                        } catch (_) {}
+                        if (!mounted) return;
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -393,6 +409,8 @@ class _DetalleEstacionamientoScreenState
               const SizedBox(width: 10),
               _leyenda(Colors.grey, 'Ocupado'),
               const SizedBox(width: 10),
+              _leyenda(Colors.orange, 'Reservado'),
+              const SizedBox(width: 10),
               _leyenda(colorCianNeon, 'Tuyo'),
             ],
           ),
@@ -411,22 +429,32 @@ class _DetalleEstacionamientoScreenState
             itemCount: _espacios.length,
             itemBuilder: (_, i) {
               final e = _espacios[i];
+              final uid = Supabase.instance.client.auth.currentUser?.id;
               final libre = e['disponible'] == true;
+              final reservadoHasta = e['reservado_hasta'] != null
+                  ? DateTime.tryParse(e['reservado_hasta'])?.toLocal()
+                  : null;
+              final reservadoPor = e['reservado_por'];
+              final bloqueado =
+                  reservadoHasta != null &&
+                  reservadoHasta.isAfter(DateTime.now()) &&
+                  reservadoPor != uid;
               final sel = _espacioSeleccionadoId == e['id'];
 
               Color border, bg, text;
               if (!libre && e['id'] == _miEspacioReservadoId) {
-                // Mi espacio — cian
                 border = colorCianNeon;
                 bg = colorCianNeon.withOpacity(0.15);
                 text = colorCianNeon;
               } else if (!libre) {
-                // Ocupado por otro
                 border = Colors.transparent;
                 bg = Colors.grey[900]!;
                 text = Colors.grey[700]!;
+              } else if (bloqueado) {
+                border = Colors.orange.withOpacity(0.6);
+                bg = Colors.orange.withOpacity(0.1);
+                text = Colors.orange;
               } else if (sel) {
-                // Seleccionado por mí ahora mismo
                 border = colorCianNeon;
                 bg = colorCianNeon;
                 text = Colors.black;
@@ -439,7 +467,7 @@ class _DetalleEstacionamientoScreenState
                 text = colorVerdeStatus;
               }
 
-              final tappable = libre;
+              final tappable = libre && !bloqueado;
 
               return GestureDetector(
                 onTap: tappable
